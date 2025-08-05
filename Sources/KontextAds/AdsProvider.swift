@@ -16,6 +16,7 @@ public class AdsProvider: @unchecked Sendable {
     private var isDisabled: Bool
     private var adServerUrl: String
     private var apiClient: APIClient?
+    private var sessionId: String?
 
     public var theme: Theme = .light
     public var onAdView: ((AdEvent) -> Void)?
@@ -33,6 +34,7 @@ public class AdsProvider: @unchecked Sendable {
         variantId: String? = nil,
         advertisingId: String? = nil,
         vendorId: String? = nil,
+        sessionId: String? = nil,
         isDisabled: Bool = false,
         adServerUrl: String = "https://server.megabrain.co"
     ) {
@@ -45,6 +47,7 @@ public class AdsProvider: @unchecked Sendable {
         self.variantId = variantId
         self.advertisingId = advertisingId
         self.vendorId = vendorId
+        self.sessionId = sessionId
         self.isDisabled = isDisabled
         self.adServerUrl = adServerUrl
 
@@ -54,25 +57,12 @@ public class AdsProvider: @unchecked Sendable {
     }
 
     private func preload() {
-        let request = PreloadBodyRequest(
-            publisherToken: publisherToken,
-            conversationId: conversationId,
-            userId: userId,
-            messages: messages,
-            variantId: variantId,
-            character: character,
-            advertisingId: advertisingId,
-            vendorId: vendorId,
-            sessionId: nil
-        )
-
+        let requestBody = generatePreloadBodyRequest()
         Task {
             do {
-                response = try await apiClient?.request(path: "/preload", method: .post, body: request)
+                response = try await apiClient?.request(path: "/preload", method: .post, body: requestBody)
             } catch {
-                print("[AdsProvider] ERROR preloading ads: \(error)")
-                let errorRequest = ErrorRequest(error: "\(error)", additionalData: .init(preloadBodyRequest: request))
-                try await apiClient?.send(path: "/error", method: .post, body: errorRequest)
+                log("ERROR preloading ads: \(error)", additionalData: .init(preloadBodyRequest: requestBody))
             }
         }
     }
@@ -82,6 +72,7 @@ public class AdsProvider: @unchecked Sendable {
             let response,
             let lastMessage = messages.last
         else {
+            log("ERROR iFrame config", additionalData: .init(preloadBodyRequest: generatePreloadBodyRequest()))
             return []
         }
 
@@ -111,5 +102,27 @@ public class AdsProvider: @unchecked Sendable {
         case .assistant:
             return getAdConfig()
         }
+    }
+
+    private func log(_ message: String, additionalData: AdditionalData? = nil) {
+        print("[AdsProvider] \(message)")
+        let errorRequest = ErrorRequest(error: message, additionalData: additionalData)
+        Task {
+            try await apiClient?.send(path: "/error", method: .post, body: errorRequest)
+        }
+    }
+
+    private func generatePreloadBodyRequest() -> PreloadBodyRequest {
+        PreloadBodyRequest(
+            publisherToken: publisherToken,
+            conversationId: conversationId,
+            userId: userId,
+            messages: messages,
+            variantId: variantId,
+            character: character,
+            advertisingId: advertisingId,
+            vendorId: vendorId,
+            sessionId: sessionId
+        )
     }
 }
