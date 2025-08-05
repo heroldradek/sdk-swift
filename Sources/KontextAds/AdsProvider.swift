@@ -70,7 +70,9 @@ public class AdsProvider: @unchecked Sendable {
             do {
                 response = try await apiClient?.request(path: "/preload", method: .post, body: request)
             } catch {
-                log("Error: \(error)", data: request)
+                print("[AdsProvider] ERROR preloading ads: \(error)")
+                let errorRequest = ErrorRequest(error: "\(error)", additionalData: .init(preloadBodyRequest: request))
+                try await apiClient?.send(path: "/error", method: .post, body: errorRequest)
             }
         }
     }
@@ -109,11 +111,5 @@ public class AdsProvider: @unchecked Sendable {
         case .assistant:
             return getAdConfig()
         }
-    }
-
-    private func log(_ message: String, data: Any?) {
-        print("[AdsProvider] \(message)")
-        let errorRequest = ErrorRequest(error: message, additionalData: data)
-        apiClient?.request(path: "/error", method: .post, body: errorRequest)
     }
 }

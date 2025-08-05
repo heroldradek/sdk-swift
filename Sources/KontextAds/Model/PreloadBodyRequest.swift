@@ -1,6 +1,6 @@
 import Foundation
 
-struct PreloadBodyRequest: Codable {
+public struct PreloadBodyRequest: Codable, Sendable {
     let publisherToken: String
     let conversationId: String
     let userId: String

@@ -60,4 +60,35 @@ public final class APIClient {
             throw APIError.decodingError(error)
         }
     }
+
+    public func send<Body: Encodable>(
+        path: String,
+        method: HTTPMethod = .get,
+        body: Body? = nil
+    ) async throws {
+        guard let url = URL(string: path, relativeTo: baseURL) else {
+            throw APIError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method.rawValue
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let body = body {
+            do {
+                request.httpBody = try JSONEncoder().encode(body)
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            } catch {
+                throw APIError.requestFailed(error)
+            }
+        }
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse(statusCode: -1)
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw APIError.invalidResponse(statusCode: httpResponse.statusCode)
+        }
+    }
 }
