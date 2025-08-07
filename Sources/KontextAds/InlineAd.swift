@@ -2,15 +2,9 @@ import SwiftUI
 import UIKit
 import WebKit
 
-/// Delegate protocol to receive events from the InlineAd iframe
-///     - Parameters:
-///   - inlineAd: the InlineAd instance sending the event
-///   - event: the payload object sent from the iframe (usually a Dictionary)
-///
-
 public protocol InlineAdDelegate: AnyObject {
     @MainActor
-    func inlineAd(_ inlineAd: InlineAd, didReceiveEvent event: [String: Any])
+    func inlineAd(_ inlineAd: InlineAd, didReceiveEvent event: InlineAdEvent)
 }
 
 public class InlineAdScriptMessageHandler: NSObject, WKScriptMessageHandler {
@@ -27,30 +21,30 @@ public class InlineAdScriptMessageHandler: NSObject, WKScriptMessageHandler {
     ) {
         guard message.name == "iframeMessage",
               let ad = inlineAd else { return }
-        if let dict = message.body as? [String: Any],
-           let type = dict["type"] as? String {
-
-            switch type {
-            case "init-iframe":
-                ad.sendUpdateIframe()
-            case "view-iframe", "click-iframe":
-                ad.adDelegate?.inlineAd(ad, didReceiveEvent: dict)
-            case "error-iframe":
-                print("[InlineAd]: Error: \(dict)")
-            default: break
+        
+        if let dict = message.body as? [String: Any] {
+            if let event = InlineAdEvent.from(dict: dict) {
+                switch event {
+                case .initIframe:
+                    ad.sendUpdateIframe()
+                case .viewIframe, .clickIframe, .resizeIframe:
+                    ad.adDelegate?.inlineAd(ad, didReceiveEvent: event)
+                case .error(let message):
+                    print("[InlineAd]: Error: \(message)")
+                case .unknown(let data):
+                    break
+                }
             }
-        } else {
-            print("[InlineAd]: Received non-dictionary message: \(message.body)")
         }
     }
 }
 
 public class InlineAd: WKWebView {
     private let config: AdConfig
-    let webConfiguration = WKWebViewConfiguration()
+    private let webConfiguration = WKWebViewConfiguration()
+    private var scriptHandler: InlineAdScriptMessageHandler?
 
     public weak var adDelegate: InlineAdDelegate?
-    private var scriptHandler: InlineAdScriptMessageHandler?
 
     public init(frame: CGRect = .zero, config: AdConfig) {
         self.config = config
@@ -116,10 +110,10 @@ public class InlineAd: WKWebView {
 
 public struct InlineAdView: UIViewRepresentable {
     private let config: AdConfig
-    private var onEvent: ((InlineAd, [String: Any]) -> Void)? = nil
+    private var onEvent: ((InlineAdEvent) -> Void)? = nil
 
     public init(config: AdConfig,
-                onEvent: ((InlineAd, [String: Any]) -> Void)? = nil) {
+                onEvent: ((InlineAdEvent) -> Void)? = nil) {
         self.config = config
         self.onEvent = onEvent
     }
@@ -146,8 +140,8 @@ public struct InlineAdView: UIViewRepresentable {
         init(_ parent: InlineAdView) {
             self.parent = parent
         }
-        public func inlineAd(_ inlineAd: InlineAd, didReceiveEvent event: [String : Any]) {
-            parent.onEvent?(inlineAd, event)
+        public func inlineAd(_ inlineAd: InlineAd, didReceiveEvent event: InlineAdEvent) {
+            parent.onEvent?(event)
         }
     }
 }

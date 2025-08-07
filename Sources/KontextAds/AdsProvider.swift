@@ -1,6 +1,5 @@
 import Foundation
 
-
 public class AdsProvider: @unchecked Sendable {
 
     // MARK: - Settings
@@ -19,10 +18,11 @@ public class AdsProvider: @unchecked Sendable {
     private var sessionId: String?
 
     public var theme: Theme = .light
-    public var onAdView: ((AdEvent) -> Void)?
-    public var onAdClick: ((AdEvent) -> Void)?
     
     private var response: PreloadResponse?
+    private var preloadTask: Task<Void, Never>?
+    private var preloadContinuation: CheckedContinuation<[AdConfig]?, Never>?
+    
     // MARK: - Initializer
     public init(
         messages: [ChatMessage],
@@ -36,7 +36,8 @@ public class AdsProvider: @unchecked Sendable {
         vendorId: String? = nil,
         sessionId: String? = nil,
         isDisabled: Bool = false,
-        adServerUrl: String = "https://server.megabrain.co"
+        adServerUrl: String = "https://server.megabrain.co",
+        theme: Theme = .light
     ) {
         self.messages = messages
         self.publisherToken = publisherToken
@@ -50,6 +51,7 @@ public class AdsProvider: @unchecked Sendable {
         self.sessionId = sessionId
         self.isDisabled = isDisabled
         self.adServerUrl = adServerUrl
+        self.theme = theme
 
         if let serverURL = URL(string: adServerUrl) {
             apiClient = APIClient(url: serverURL)
@@ -57,12 +59,22 @@ public class AdsProvider: @unchecked Sendable {
     }
 
     private func preload() {
-        let requestBody = generatePreloadBodyRequest()
-        Task {
+        preloadTask?.cancel()
+        response = nil
+
+        preloadTask = Task {
+            let requestBody = generatePreloadBodyRequest()
             do {
-                response = try await apiClient?.request(path: "/preload", method: .post, body: requestBody)
+                let preloadResponse: PreloadResponse? = try await apiClient?.request(path: "/preload", method: .post, body: requestBody)
+
+                response = preloadResponse
+                preloadContinuation?.resume(returning: getAdConfig())
+                preloadContinuation = nil
+
             } catch {
                 log("ERROR preloading ads: \(error)", additionalData: .init(preloadBodyRequest: requestBody))
+                preloadContinuation?.resume(returning: nil)
+                preloadContinuation = nil
             }
         }
     }
@@ -92,15 +104,48 @@ public class AdsProvider: @unchecked Sendable {
         return items
     }
 
-    public func addMessage(_ message: ChatMessage) -> [AdConfig]? {
+    public func addMessage(_ message: ChatMessage) async -> [AdConfig]? {
         guard !isDisabled else { return nil }
         messages.append(message)
+        
         switch message.role {
         case .user:
             preload()
             return nil
         case .assistant:
-            return getAdConfig()
+            if response != nil {
+                return getAdConfig()
+            }
+
+            return await withCheckedContinuation { continuation in
+                Task {
+                    let timeoutTask = Task {
+                        try await Task.sleep(for: .seconds(5))
+                        await MainActor.run {
+                            if self.preloadContinuation != nil {
+                                self.preloadContinuation?.resume(returning: nil)
+                                self.preloadContinuation = nil
+                            }
+                        }
+                    }
+                    
+                    await MainActor.run {
+                        if let response = self.response {
+                            timeoutTask.cancel()
+                            continuation.resume(returning: self.getAdConfig())
+                            return
+                        }
+
+                        self.preloadContinuation = continuation
+                    }
+
+                    do {
+                        try await timeoutTask.value
+                    } catch {
+                        log("ERROR timeout was cancelled")
+                    }
+                }
+            }
         }
     }
 
