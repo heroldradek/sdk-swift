@@ -76,10 +76,10 @@ public class InlineAd: WKWebView {
     }
     
     deinit {
-        Task { [weak self] in
-            await self?.webConfiguration
-              .userContentController
-              .removeScriptMessageHandler(forName: "iframeMessage")
+        scriptHandler = nil
+
+        MainActor.assumeIsolated {
+            webConfiguration.userContentController.removeScriptMessageHandler(forName: "iframeMessage")
         }
     }
 

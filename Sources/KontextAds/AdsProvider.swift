@@ -67,14 +67,23 @@ public class AdsProvider: @unchecked Sendable {
             do {
                 let preloadResponse: PreloadResponse? = try await apiClient?.request(path: "/preload", method: .post, body: requestBody)
 
-                response = preloadResponse
-                preloadContinuation?.resume(returning: getAdConfig())
-                preloadContinuation = nil
+                await MainActor.run {
+                    self.response = preloadResponse
+                    // Resume any waiting continuation
+                    if let continuation = self.preloadContinuation {
+                        continuation.resume(returning: self.getAdConfig())
+                        self.preloadContinuation = nil
+                    }
+                }
 
             } catch {
-                log("ERROR preloading ads: \(error)", additionalData: .init(preloadBodyRequest: requestBody))
-                preloadContinuation?.resume(returning: nil)
-                preloadContinuation = nil
+                await MainActor.run {
+                    // Resume continuation with nil to indicate failure
+                    if let continuation = self.preloadContinuation {
+                        continuation.resume(returning: nil)
+                        self.preloadContinuation = nil
+                    }
+                }
             }
         }
     }
@@ -136,13 +145,17 @@ public class AdsProvider: @unchecked Sendable {
                             return
                         }
 
+                        if let existingContinuation = self.preloadContinuation {
+                            existingContinuation.resume(returning: nil)
+                        }
+
                         self.preloadContinuation = continuation
                     }
 
                     do {
                         try await timeoutTask.value
                     } catch {
-                        log("ERROR timeout was cancelled")
+                        // The continuation will be resumed by the preload completion
                     }
                 }
             }
